@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, Trash2, Save, Send, Printer, History, GitBranch, Lock, Eye, AlertCircle, Loader, FilePlus, Upload } from 'lucide-react';
+import { Plus, Trash2, Save, Send, Printer, History, GitBranch, Lock, Eye, AlertCircle, Loader, FilePlus, Upload, RotateCcw } from 'lucide-react';
 import { Quote, QuoteItem, QuoteStatus } from '../types';
 import * as pdfjsLib from 'pdfjs-dist';
 
@@ -54,28 +54,36 @@ const QuoteBuilder = () => {
 
   const displayedVersion = isViewingHistory ? viewingVersion : version;
 
-  // Initialize PDF Worker securely
+  // Initialize PDF Worker securely using a Blob URL to mitigate CORS issues
   useEffect(() => {
-    const setupWorker = async () => {
+    let workerBlobUrl: string | null = null;
+    const loadPdfWorker = async () => {
       try {
-        // Use Blob for worker to avoid CORS issues with third-party CDNs if possible, 
-        // or just point to the CDN if the environment permits. 
-        // Using unpkg as a reliable CDN for the worker matching the version in import map.
-        const workerUrl = `https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js`;
-        const response = await fetch(workerUrl);
-        const workerScript = await response.text();
-        const blob = new Blob([workerScript], { type: 'text/javascript' });
-        const blobUrl = URL.createObjectURL(blob);
+        const workerVersion = '3.11.174'; // Match the version in import map EXACTLY
+        const workerCdnUrl = `https://esm.sh/pdfjs-dist@${workerVersion}/build/pdf.worker.min.js`;
         
-        pdfjs.GlobalWorkerOptions.workerSrc = blobUrl;
+        const response = await fetch(workerCdnUrl);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch PDF.js worker: ${response.statusText}`);
+        }
+        const workerScript = await response.text();
+        const blob = new Blob([workerScript], { type: 'application/javascript' });
+        workerBlobUrl = URL.createObjectURL(blob);
+        pdfjs.GlobalWorkerOptions.workerSrc = workerBlobUrl;
         setWorkerReady(true);
       } catch (e) {
-        console.warn("Failed to load PDF worker via Blob, falling back to CDN URL", e);
-        pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js`;
-        setWorkerReady(true);
+        console.error("Error setting PDF worker source:", e);
+        // Optionally, display an error message to the user
       }
     };
-    setupWorker();
+
+    loadPdfWorker();
+
+    return () => {
+      if (workerBlobUrl) {
+        URL.revokeObjectURL(workerBlobUrl);
+      }
+    };
   }, []);
 
   // Actions
@@ -130,6 +138,23 @@ const QuoteBuilder = () => {
       setViewingVersion(v);
     }
     setShowHistory(false);
+  };
+
+  const handleRestore = () => {
+    if (viewingVersion === null) return;
+    
+    const entry = history.find(h => h.version === viewingVersion);
+    if (!entry) return;
+
+    if (confirm(`Are you sure you want to restore Version ${viewingVersion}?\n\nThis will overwrite your current draft contents with the data from Version ${viewingVersion}. The version number will remain v${version} (your current working version).`)) {
+      setCustomer(entry.customer);
+      // Deep copy items to ensure they are new instances
+      setItems(JSON.parse(JSON.stringify(entry.items)));
+      setStatus(QuoteStatus.DRAFT); // Always restore to Draft so it can be edited
+      setViewingVersion(null);
+      setShowHistory(false);
+      alert(`Successfully restored content from Version ${viewingVersion}.`);
+    }
   };
 
   const handleNewQuote = () => {
@@ -357,7 +382,7 @@ const QuoteBuilder = () => {
           </h1>
           <p className="text-gray-500">
             {isViewingHistory 
-              ? `Viewing snapshot of version ${viewingVersion}. Go back to current version to edit.` 
+              ? `Viewing snapshot of version ${viewingVersion}. Restore this version or return to current to edit.` 
               : 'Create a new equipment or parts quote.'}
           </p>
         </div>
@@ -461,13 +486,22 @@ const QuoteBuilder = () => {
 
           {/* Action Buttons based on State */}
           {isViewingHistory ? (
-            <button 
-              onClick={() => setViewingVersion(null)}
-              className="flex items-center space-x-2 px-4 py-2 bg-industrial-600 hover:bg-industrial-500 rounded-lg text-white font-medium shadow-sm transition-colors"
-            >
-              <Eye size={18} />
-              <span>Return to Current</span>
-            </button>
+            <>
+              <button 
+                onClick={() => setViewingVersion(null)}
+                className="flex items-center space-x-2 px-4 py-2 bg-white border border-gray-300 hover:bg-gray-50 rounded-lg text-gray-700 font-medium transition-colors"
+              >
+                <Eye size={18} />
+                <span>Return to Current</span>
+              </button>
+              <button 
+                onClick={handleRestore}
+                className="flex items-center space-x-2 px-4 py-2 bg-industrial-600 hover:bg-industrial-500 rounded-lg text-white font-medium shadow-sm transition-colors"
+              >
+                <RotateCcw size={18} />
+                <span>Restore Version {viewingVersion}</span>
+              </button>
+            </>
           ) : (
             <>
               {status === QuoteStatus.SENT || status === QuoteStatus.ACCEPTED ? (

@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { HashRouter, Routes, Route, Navigate, useLocation, Link } from 'react-router-dom';
+import React, { useState, useEffect, useCallback } from 'react';
+import { HashRouter, Routes, Route, Navigate, useLocation, Link, useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, 
   Users, 
@@ -11,7 +11,8 @@ import {
   X,
   Bot,
   MessageSquare,
-  ExternalLink
+  ExternalLink,
+  ShieldAlert
 } from 'lucide-react';
 import { UserRole } from './types';
 import Dashboard from './components/Dashboard';
@@ -46,14 +47,14 @@ const SidebarItem = ({ icon: Icon, label, to, active }: any) => (
   </Link>
 );
 
-interface PortalLayoutProps {
-  children?: React.ReactNode;
-}
-
-const PortalLayout = ({ children }: PortalLayoutProps) => {
-  const { user, logout } = React.useContext(AuthContext)!;
+const PortalLayout = ({ children }: { children?: React.ReactNode }) => {
+  const auth = React.useContext(AuthContext);
+  const user = auth?.user;
+  const logout = auth?.logout;
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  if (!user || !logout) return <Navigate to="/login" />;
 
   const navItems = [
     { icon: LayoutDashboard, label: 'Dashboard', to: '/', roles: [UserRole.ADMIN, UserRole.SALES, UserRole.ACCOUNTING] },
@@ -68,7 +69,6 @@ const PortalLayout = ({ children }: PortalLayoutProps) => {
 
   return (
     <div className="flex h-screen bg-gray-100">
-      {/* Mobile Sidebar Overlay */}
       {mobileOpen && (
         <div 
           className="fixed inset-0 bg-black/50 z-20 lg:hidden"
@@ -76,7 +76,6 @@ const PortalLayout = ({ children }: PortalLayoutProps) => {
         />
       )}
 
-      {/* Sidebar */}
       <aside className={`
         fixed inset-y-0 left-0 z-30 w-64 bg-[#1a1a1a] text-white transform transition-transform duration-200 ease-in-out lg:translate-x-0 lg:static lg:inset-0
         ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}
@@ -106,7 +105,7 @@ const PortalLayout = ({ children }: PortalLayoutProps) => {
         <div className="absolute bottom-0 left-0 right-0 p-4 bg-black/20">
           <div className="flex items-center space-x-3 mb-3 px-2">
             <div className="w-8 h-8 rounded-full bg-gray-600 flex items-center justify-center text-sm font-bold">
-              {user.name.charAt(0)}
+              {user.name?.charAt(0) || 'U'}
             </div>
             <div className="flex-1 overflow-hidden">
               <p className="text-sm font-medium truncate">{user.name}</p>
@@ -123,7 +122,6 @@ const PortalLayout = ({ children }: PortalLayoutProps) => {
         </div>
       </aside>
 
-      {/* Main Content */}
       <div className="flex-1 flex flex-col overflow-hidden">
         <header className="bg-white shadow-sm lg:hidden h-16 flex items-center px-4">
           <button onClick={() => setMobileOpen(true)} className="text-gray-600">
@@ -143,7 +141,6 @@ const App = () => {
   const [user, setUser] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Initialize session
   useEffect(() => {
     const checkSession = () => {
       try {
@@ -151,8 +148,9 @@ const App = () => {
         const savedUser = localStorage.getItem('ai_portal_user');
         
         if (token && savedUser) {
-          // In a production app, verify the token validity with the backend here /api/auth/me
-          setUser(JSON.parse(savedUser));
+          const parsedUser = JSON.parse(savedUser);
+          console.log("Restoring session for:", parsedUser.email);
+          setUser(parsedUser);
         }
       } catch (e) {
         console.error("Session restoration failed", e);
@@ -164,27 +162,34 @@ const App = () => {
     checkSession();
   }, []);
 
-  const login = (token: string, userData: any) => {
-    setUser(userData);
+  const login = useCallback((token: string, userData: any) => {
+    console.log("Login successful, setting user:", userData.email);
     localStorage.setItem('ai_portal_token', token);
     localStorage.setItem('ai_portal_user', JSON.stringify(userData));
-  };
+    setUser(userData);
+  }, []);
 
-  const logout = () => {
-    setUser(null);
+  const logout = useCallback(() => {
+    console.log("Logging out");
     localStorage.removeItem('ai_portal_token');
     localStorage.removeItem('ai_portal_user');
-  };
+    setUser(null);
+  }, []);
 
   if (isLoading) {
-    return <div className="flex h-screen items-center justify-center bg-gray-900 text-white">Loading Portal...</div>;
+    return (
+      <div className="flex flex-col h-screen items-center justify-center bg-gray-900 text-white space-y-4">
+        <div className="w-12 h-12 border-4 border-industrial-500 border-t-transparent rounded-full animate-spin"></div>
+        <div className="font-bold tracking-widest animate-pulse uppercase text-sm">Initializing Portal...</div>
+      </div>
+    );
   }
 
   return (
     <AuthContext.Provider value={{ user, isLoading, login, logout }}>
       <HashRouter>
         <Routes>
-          <Route path="/login" element={!user ? <Login /> : <Navigate to="/" />} />
+          <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
           <Route path="/*" element={
             user ? (
               <PortalLayout>
@@ -197,11 +202,11 @@ const App = () => {
                   <Route path="/messages" element={<Messages />} />
                   <Route path="/settings" element={<SettingsPage />} />
                   <Route path="/ai" element={<AIPortal />} />
-                  <Route path="*" element={<div className="p-8">Page under construction</div>} />
+                  <Route path="*" element={<div className="p-8 bg-white rounded-lg shadow">Page under construction</div>} />
                 </Routes>
               </PortalLayout>
             ) : (
-              <Navigate to="/login" />
+              <Navigate to="/login" replace />
             )
           } />
         </Routes>
